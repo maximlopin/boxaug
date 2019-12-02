@@ -1,30 +1,9 @@
 import os
-from PIL import Image, ImageDraw
 import numpy as np
+from PIL import Image, ImageDraw
 from lxml import etree
 from sklearn.cluster import k_means
-
-
-def IOU(a_wh, b_wh):
-    aw, ah = a_wh
-    bw, bh = b_wh
-
-    I = min(aw, bw) * min(ah, bh)
-
-    area_a = aw * ah
-    area_b = bw * bh
-
-    U = area_a + area_b - I
-
-    return I / U
-
-
-class SkipImage(Exception):
-    pass
-
-
-class CropError(Exception):
-    pass
+from exceptions import SkipImage, CropError
 
 
 class ImageWithBoxes():
@@ -41,33 +20,27 @@ class ImageWithBoxes():
 
         crop, shift_x, shift_y, = self._compute_crop(image, boxes, ar)
 
-        (x0, y0, x1, y1) = crop
-
-        w = [-1.0, 0.0, 1.0, 0.0] @ np.array(crop)
-        h = [0.0, -1.0, 0.0, 1.0] @ np.array(crop)
-
-        crop_boxes = boxes - [x0, y0, x0, y0]
+        x0, y0, *_ = crop
 
         self._shift_x = shift_x
         self._shift_y = shift_y
         self._crop = crop
-
-        self.width = w
-        self.height = h
-
-        self._path = path
+        self.width = [-1.0, 0.0, 1.0, 0.0] @ np.array(crop)
+        self.height = [0.0, -1.0, 0.0, 1.0] @ np.array(crop)
 
         self.anchors = None
-
-        self.boxes = crop_boxes
+        self.anchor_indices = None
+        self.boxes = boxes - [x0, y0, x0, y0]
         self.labels = labels
+
+        self._path = path
 
     @property
     def norm_boxes(self):
         w, h = self.width, self.height
         return self.boxes / [w, h, w, h]
 
-    def __call__(self, out_w, out_h, stoi=None, shift=True):
+    def __call__(self, out_w, out_h, stoi, shift=True, random_flip=True):
         """
         Parameters:
             out_w, int: width of feature space boxes will be mapped to
@@ -81,93 +54,91 @@ class ImageWithBoxes():
             else:
                 PIL.Image, np.ndarray(5 + len(stoi), out_h, out_w)
         """
-        image = Image.open(self._path)
 
         if shift is True:
-            shift_x = np.random.uniform(*self._shift_x)
-            shift_y = np.random.uniform(*self._shift_y)
-            shift = [shift_x, shift_y]
-
-            boxes = self.boxes - shift
-            x0, y0, x1, y1 = np.array(self._crop) + shift
+            shx = np.random.uniform(*self._shift_x)
+            shy = np.random.uniform(*self._shift_y)
         else:
-            boxes = self.boxes
-            x0, y0, x1, y1 = np.array(self._crop)
-            
-        crop = image.crop([*crop])
+            shx = 0.0
+            shy = 0.0
 
-        boxes = boxes / [crop.width, crop.height, crop.width, crop.height]
-        boxes = boxes * [out_w, out_h, out_w, out_h]
+        shift = [shx, shy, shx, shy]
+
+        image = Image.open(self._path).crop(np.array(self._crop) + shift)
         
-        if stoi is None:
-            out = self._single_class_output(boxes, out_h, out_w)
+        w0, h0 = image.width, image.height
+        w1, h1 = out_w, out_h
+        norm = [w1/w0, h1/h0, w1/w0, h1/h0]
+        
+        boxes = (self.boxes - shift) * norm
+
+        if random_flip is True and np.random.random() > 0.5:
+            image = image.transpose(Image.FLIP_LEFT_RIGHT)
+            boxes = ([w1, 0.0, w1, 0.0] - boxes) * [1.0, -1.0, 1.0, -1.0]
+            
+        coordinates = [0.5, 0.5] @ boxes.reshape(-1, 2, 2)
+
+        if len(stoi) > 1:
+            out = self._multi_class_output(coordinates, out_h, out_w, stoi)
         else:
-            out = self._multi_class_output(boxes, stoi, out_h, out_w)
+            out = self._single_class_output(coordinates, out_h, out_w)
 
-        return crop, out
+        return image.convert('RGB'), out
 
-    def _single_class_output(self, boxes, out_h, out_w):
-        shape = (5, out_h, out_w)
+    def _single_class_output(self, coordinates, out_h, out_w):
+        shape = (3 * len(self.anchors), out_h, out_w)
         out = np.zeros(shape)
 
-        for box in boxes:
-            x, y = np.array([0.5, 0.5]) @ box.reshape((2, 2))
+        for i, (x, y) in zip(self.anchor_indices, coordinates):
+
+            x_offset = x - int(x)
+            y_offset = y - int(y)
+
+            s = len(self.anchors) + i * 2
 
             # Confidence
-            out[0, int(y), int(x)] = 1.0
+            out[i, int(y), int(x)] = 1.0
 
             # Offset x
-            out[1, int(y), int(x)] = 1.0
+            out[s, int(y), int(x)] = x_offset
 
             # Offset y
-            out[2, int(y), int(x)] = 1.0
-
-            # Width
-            out[3, int(y), int(x)] = 1.0
-
-            # Height
-            out[4, int(y), int(x)] = 1.0
+            out[s + , int(y), int(x)] = y_offset
 
         return out
 
-    def _multi_class_output(self, boxes, stoi, out_h, out_w):
-        shape = (5 + len(stoi), out_h, out_w)
+    def _multi_class_output(self, coordinates, out_h, out_w, stoi):
+        shape = (4 * len(self.anchors), out_h, out_w)
         out = np.zeros(shape)
 
-        for box, label in zip(boxes, self.labels):
-            x, y = np.array([0.5, 0.5]) @ box.reshape((2, 2))
+        for i, L, (x, y) in zip(self.anchor_indices, self.labels, coordinates):
+
+            x_offset = x - int(x)
+            y_offset = y - int(y)
+
+            s = len(self.anchors) + i * 3
 
             # Confidence
-            out[0, int(y), int(x)] = 1.0
+            out[i, int(y), int(x)] = 1.0
 
             # Offset x
-            out[1, int(y), int(x)] = 1.0
+            out[s + 1, int(y), int(x)] = x_offset
 
             # Offset y
-            out[2, int(y), int(x)] = 1.0
+            out[s + 2, int(y), int(x)] = y_offset
 
-            # Width
-            out[3, int(y), int(x)] = 1.0
-
-            # Height
-            out[4, int(y), int(x)] = 1.0
-
-            # Class
-            out[5 + stoi[label], int(y), int(x)] = 1.0
+            # Label
+            out[s + 3, int(y), int(x)] = stoi[L]
 
         return out
 
     def _compute_crop(self, image, boxes, ar):
         """
         1. Creates a window of size [w = ar*min(image.size), h = min(image.size)]
-        2. Places the windows on image so that it encloses ALL boxes in it,
+        2. Places the window on image so that it encloses ALL boxes in it,
         if that's not possible raises CropError
         3. Defines a random uniform range that the window can be shifted
         without losing boxes out of scope
-
-        # TODO: Only raise CropError if it's impossible to get rid of
-        # some box that prevents you from enclosing all other boxes without
-        # shifting out of image size range (or rather do this optionally)
 
         Parameters:
             image: PIL.Image instance
@@ -176,7 +147,7 @@ class ImageWithBoxes():
 
         Returns:
             tuple(
-                np.ndarray([x0, y0, x1, y1]): crop coordinates
+                tuple(x0, y0, x1, y1): crop coordinates
                 tuple(float, float): x axis safe shift range
                 tuple(float, float): y axis safe shift range
             )
@@ -222,32 +193,33 @@ class ImageWithBoxes():
         return (x0, y0, x1, y1), shift_x, shift_y
 
     def preview(self):
-        shift_x = np.random.uniform(*self._shift_x)
-        shift_y = np.random.uniform(*self._shift_y)
-        shift = [shift_x, shift_y] * 2
+        shx = np.random.uniform(*self._shift_x)
+        shy = np.random.uniform(*self._shift_y)
+        shift = [shx, shy, shx, shy]
 
-        image = Image.open(self._path)
-        crop = image.crop(np.array(self._crop) + shift)
-
+        image = Image.open(self._path).crop(np.array(self._crop) + shift)
         boxes = self.boxes - shift
 
-        draw = ImageDraw.Draw(crop)
-        for i, box in enumerate(boxes):
-            if self.anchors is not None:
-                x, y = [0.5, 0.5] @ box.reshape((2, 2))
+        draw = ImageDraw.Draw(image)
+        for i, box in zip(self.anchor_indices, boxes):
 
-                w, h = self.anchors[i]
-            
-                x0 = (x / self.width - w / 2) * crop.width
-                y0 = (y / self.height - h / 2) * crop.height
-                x1 = (x / self.width + w / 2) * crop.width
-                y1 = (y / self.height + h / 2) * crop.height
+            # Center coordinates of box
+            x, y = [0.5, 0.5] @ box.reshape(2, 2)
 
-                draw.rectangle([x0, y0, x1, y1], outline=(255, 0, 255), width=3)
+            # Size of corresponding anchor box
+            w, h = self.anchors[i]
+
+            # Coordinates of the anchor box
+            x0 = (x / self.width - w / 2) * image.width
+            y0 = (y / self.height - h / 2) * image.height
+            x1 = (x / self.width + w / 2) * image.width
+            y1 = (y / self.height + h / 2) * image.height
+
+            draw.rectangle([x0, y0, x1, y1], outline=(255, 0, 255), width=3)
 
             draw.rectangle([*box], outline=(255, 255, 0), width=3)
 
-        return crop
+        return image
 
     @classmethod
     def from_xml(cls, path, use_labels):
@@ -274,40 +246,41 @@ class ImageWithBoxes():
 
 
 class Dataset():
-    def __init__(self, path, use_labels=[], transform=lambda x: x, 
-                 anchors=None, k=3):
+    def __init__(self, path, anchors, use_labels, transform=lambda x: x):
         """
         path: path to folder with labelimg .xml files
 
-        use_labels: list of labels that you want to use (others will be ignored)
+        anchors: list of normalized (width, height) pairs
 
-        transform: an object implementing __call__ method.
-        It's only used to transform images, boxes are not affected.
-        (do not use translational/deformational/distortional transformations)
+        use_labels: labels that are not in this list will be ignored
+
+        transform: a transform that will be applied to image (must implement 
+        __call__ method)
         """
         samples, itos, stoi = self._load_images(path, use_labels)
         self.samples = samples
         self.itos = itos
         self.stoi = stoi
         self.transform = transform
+        self.anchors = anchors
 
-        if anchors is None:
-            norm_boxes = np.concatenate([s.norm_boxes for s in samples], axis=0)
-            anchors = self._k_means_anchors(norm_boxes, k)
-        else:
-            anchors = np.array(anchors)
-
+        # Assign anchors to each box
         for s in samples:
             boxes = [-1.0, 1.0] @ s.norm_boxes.reshape(-1, 2, 2)
-            indices = [np.argmax([IOU(a, b) for a in anchors]) 
+            indices = [np.argmax([IOU(a, b) for a in anchors])
                                                 for b in boxes]
-            s.anchors = [anchors[i] for i in indices]
+            s.anchors = anchors
+            s.anchor_indices = indices
+
+    def boxes(self):
+        return np.concatenate([s.norm_boxes for s in samples], axis=0)
 
     def mean_iou(self):
         iou_list = []
         for s in self.samples:
-            box_sizes = [-1.0, 1.0] @ s.norm_boxes.reshape((-1, 2, 2))
-            for a_wh, b_wh in zip(s.anchors, box_sizes):
+            boxes = [-1.0, 1.0] @ s.norm_boxes.reshape(-1, 2, 2)
+            for i, a_wh in zip(s.anchor_indices, boxes):
+                b_wh = s.anchors[i]
                 iou = IOU(a_wh, b_wh)
                 iou_list.append(iou)
         return np.mean(iou_list)
@@ -318,7 +291,6 @@ class Dataset():
         for filename in os.listdir(path):
             if filename.endswith('xml'):
                 xml_path = os.path.join(path, filename)
-
                 try:
                     image_wb = ImageWithBoxes.from_xml(xml_path, use_labels)
                 except (SkipImage, CropError):
@@ -335,18 +307,6 @@ class Dataset():
     def sample(self, index):
         return self.samples[index].preview()
 
-    def _k_means_anchors(self, boxes, k):
-        """
-        Parameters:
-            boxes: np.ndarray of shape (N, 4)
-            k: desired number of anchor boxes
-        Returns:
-            np.ndarray of shape (N, 2)
-        """
-        wh = [-1.0, 1.0] @ boxes.reshape(-1, 2, 2)
-        anchors, *_ = k_means(wh, k)
-        return anchors
-
     def __len__(self):
         return len(self.samples)
         
@@ -355,3 +315,30 @@ class Dataset():
         image, y = image_wb(16, 16, self.stoi)
         x = self.transform(image)
         return x, y
+
+
+def IOU(a_wh, b_wh):
+    aw, ah = a_wh
+    bw, bh = b_wh
+
+    I = min(aw, bw) * min(ah, bh)
+
+    area_a = aw * ah
+    area_b = bw * bh
+
+    U = area_a + area_b - I
+
+    return I / U
+
+
+def k_means_anchors(boxes, k):
+    """
+    Parameters:
+        boxes: np.ndarray of shape (N, 4)
+        k: desired number of anchor boxes
+    Returns:
+        np.ndarray of shape (N, 2)
+    """
+    wh = [-1.0, 1.0] @ boxes.reshape(-1, 2, 2)
+    anchors, *_ = k_means(wh, k)
+    return anchors
