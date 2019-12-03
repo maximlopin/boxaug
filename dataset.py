@@ -7,22 +7,21 @@ from exceptions import SkipImage, CropError
 
 
 class Dataset():
-    def __init__(self, path, use_labels, anchors, transform=lambda x: x, ar=1.0):
+    def __init__(self, path, use_labels, anchors, transform):
         """
         path: path to folder with labelimg .xml files
 
-        anchors: list of normalized (width, height) pairs
-
         use_labels: labels that are not in this list will be ignored
 
-        transform: a transform that will be applied to image (must implement 
-        __call__ method)
+        anchors: list of normalized (width, height) pairs
+
+        transform: object implementing __call__ method
         """
         samples, itos, stoi = self._load_images(path, use_labels, anchors, ar)
         self.samples = samples
         self.itos = itos
         self.stoi = stoi
-        self.transform = transform
+        self.tfm = transform
         self.anchors = np.array(anchors)
 
     def _load_images(self, path, use_labels, anchors, ar):
