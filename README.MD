@@ -1,5 +1,19 @@
-#### Transforms for images and boxes
-Affine, Flip, Crop, Resize are available (for now).
+#### What is it?
 
-#### Image augmentation for LabelImg data
-Setup your input pipeline using image data made with the labelImg annotation tool (github.com/tzutalin/labelImg).
+Transforms for images and bounding boxes.
+
+```boxaug.transforms```
+
+Dataset for augmenting LabelImg (github.com/tzutalin/labelImg) data.
+
+```boxaug.datasets```
+
+#### Install
+
+```
+pip install boxaug
+```
+
+#### Usage
+
+See example of usage in ```example.ipynb``` (a few lines of code).
