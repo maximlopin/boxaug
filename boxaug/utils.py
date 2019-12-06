@@ -1,9 +1,6 @@
 import numpy as np
 from PIL import Image, ImageDraw
-
-
-class CropError(Exception):
-    pass
+from boxaug.exceptions import CropError
 
 
 def IOU(a_wh, b_wh):
@@ -27,6 +24,33 @@ def IOU(a_wh, b_wh):
     U = area_a + area_b - I
 
     return I / U
+
+
+def to_yolo(image, bboxes, labels, num_classes, num_anchors, width, height):
+    """
+    Args:
+        bboxes: np.ndarray of shape (N, 4)
+        labels: list of integers
+        num_classes: total number of classes in your dataset
+
+    Returns:
+        np.ndarray of shape (height, width, len(bboxes) * 5 + num_classes)
+    """
+    assert len(bboxes.shape) == 2
+    assert bboxes.shape[1] == 4
+
+    bboxes_xy, bboxes_wh = split_bboxes(bboxes)
+
+    x_ratio, y_ratio = height / image.shape[1], width / image.shape[0]
+
+    bboxes_xy *= [x_ratio, y_ratio]
+    bboxes_wh *= [x_ratio, y_ratio]
+
+    out = np.zeros((height, width, bboxes.shape[0] * 5 + num_classes))
+
+    for xy, wh, one_hot_labels in zip(bboxes_xy, bboxes_wh, one_hot_labels):
+        out[y, x, ]
+        pass
 
 
 def split_bboxes(bboxes):
@@ -108,22 +132,25 @@ def to_pil(image, bboxes):
     return pil_image
 
 
-def bbox_safe_crop(image, bboxes, ar):
+def safe_crop(image, points, ar, return_coordinates=False):
     """
     Crops image to desired aspect ratio keeping all bounding boxes inside
     the crop. If such crop is impossible, CropError is raised.
 
     Args:
         image: np.ndarray of shape (H, W, 3)
-        bboxes: np.ndarray of shape (N, 4)
+        points: np.ndarray of shape (N, 4)
         ar (scalar): desired aspect ratio of the crop
     
     Returns:
-        (np.ndarray) image, (np.ndarray) bboxes
+        (np.ndarray) image, (np.ndarray) points
 
+        or (if return_coordinates is True)
+
+        tuple of ints: (x0, y0, x1, y1)
     """
-    assert len(bboxes.shape) == 2
-    assert bboxes.shape[1] == 4
+    assert len(points.shape) == 2
+    assert points.shape[1] == 2
     assert ar > 0
 
     w, h = image.shape[1] - 1, image.shape[0] - 1
@@ -136,10 +163,10 @@ def bbox_safe_crop(image, bboxes, ar):
         crop_w = int(crop_h * ar)
 
     # Total box coordinates
-    tb_x0 = bboxes[:, 0].min()
-    tb_y0 = bboxes[:, 1].min()
-    tb_x1 = bboxes[:, 2].max()
-    tb_y1 = bboxes[:, 3].max()
+    tb_x0 = points[:, 0].min()
+    tb_y0 = points[:, 1].min()
+    tb_x1 = points[:, 0].max()
+    tb_y1 = points[:, 1].max()
 
     if (tb_x1 - tb_x0) > crop_w or (tb_y1 - tb_y0) > crop_h:
             raise CropError('Cannot fit all boxes inside crop.')
@@ -162,8 +189,66 @@ def bbox_safe_crop(image, bboxes, ar):
     x1 += offset_x
     y1 += offset_y
 
+    if return_coordinates is True:
+        return int(x0), int(y0), int(x1), int(y1)
+
     image_out = image[int(y0):int(y1), int(x0):int(x1)]
 
-    bboxes_out = bboxes - [x0, y0, x0, y0]
+    points_out = points - [x0, y0]
 
-    return image_out, bboxes_out
+    return image_out, points_out
+
+
+def bboxes_as_4pts(bboxes):
+    """
+    Converts 2-point bboxes to 4-point format.
+
+    Args:
+        bboxes: np.ndarray of shape (N, 4)
+
+    Returns:
+        np.ndarray of shape (N, 8)
+    """
+    assert len(bboxes.shape) == 2
+    assert bboxes.shape[1] == 4
+
+    a = np.identity(4)
+    b = np.identity(4)[[0, 3, 2, 1]]
+
+    m = np.concatenate((a, b), axis=0)
+
+    bboxes_out = (m @ bboxes.T).T
+
+    return bboxes_out
+
+
+def bboxes_as_2pts(bboxes, align=True):
+    """
+    Converts 4-point bboxes to 2-point format with or without alignment.
+
+    Args:
+        bboxes: np.ndarray of shape (N, 8)
+
+    Returns:
+        np.ndarray of shape (N, 4)
+    """
+    assert len(bboxes.shape) == 2
+    assert bboxes.shape[1] == 8
+
+    if align is True:
+        for i in range(bboxes.shape[0]):
+            points = bboxes[i].reshape(-1, 2)
+
+            cx, cy = points.mean(axis=0)
+            points -= [cx, cy]
+
+            dx, dy = (points[0] - points[2])
+            theta = -1 * np.arctan(dx / dy)
+
+            s, c = np.sin(theta), np.cos(theta)
+            rotate = np.array([[c, s], [-s, c]])
+
+            points = (rotate @ points.T).T + [cx, cy]
+            bboxes[i] = points.reshape(8)
+    
+    return bboxes[:, :4]

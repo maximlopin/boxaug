@@ -6,30 +6,51 @@ from boxaug import transforms
 from boxaug import utils
 
 
-class LabelImgDataset():
-    def __init__(self, path, transform=None, use_labels=None):
-        """
-        Args:
-            path: path to folder with LabelImg .xml files
-
-            use_labels: bounding boxes whose labels are not in this list
-            will be ignored.
-
-            transform: see boxaug.transforms
-        """
-        samples, labels_set = self._load_samples(path, use_labels)
-
-        itos = list(labels_set)
-        stoi = dict((x, i) for i, x in enumerate(itos))
-
+class Dataset():
+    def __init__(self, samples, transform):
         self.samples = samples
-        self.itos = itos
-        self.stoi = stoi
         self.tfm = transform or transforms.Identity()
 
-    def _load_samples(self, path, use_labels=None):
+    def __getitem__(self, index):
+        path, bboxes, labels = self.samples[index]
+
+        image = Image.open(path).convert('RGB')
+        image_arr = np.asarray(image)
+
+        # Boxes to points
+        bboxes_4pts = utils.bboxes_as_4pts(bboxes)
+        points = bboxes_4pts.reshape(-1, 2)
+
+        image_out, points_out = self.tfm(image_arr, points)
+
+        # Points back to bboxes
+        bboxes_4pts = points_out.reshape(-1, 8)
+        bboxes_out = utils.bboxes_as_2pts(bboxes_4pts, align=True)
+
+        return image_out, bboxes_out, labels
+
+    def __len__(self):
+        return len(self.samples)
+
+    @classmethod
+    def from_list(cls, samples, *args, **kwargs):
+        """
+        Args:
+            samples: list of tuple(
+                img_path (str),
+                bboxes (np.ndarray of shape (N, 4)),
+                labels (list of N labels)
+            ) 
+        """
+        return cls(samples, *args, **kwargs)
+
+    @classmethod
+    def from_labelimg(cls, path, *args, **kwargs):
+        """
+        Args:
+            path (str): path to directory with LabelImg .xml files
+        """
         samples = []
-        labels_set = set()
 
         for filename in os.listdir(path):
             if filename.endswith('xml'):
@@ -37,9 +58,9 @@ class LabelImgDataset():
 
                 tree = etree.parse(xml_path)
 
-                im_path = tree.find('path').text
+                img_path = tree.find('path').text
 
-                boxes = []
+                bboxes = []
                 labels = []
 
                 for obj in tree.findall('object'):
@@ -49,34 +70,9 @@ class LabelImgDataset():
                     y1 = int(obj.find('bndbox/ymax').text)
                     label = obj.find('name').text
 
-                    if use_labels is None or label in use_labels:
-                        boxes.append([x0, y0, x1, y1])
-                        labels.append(label)
+                    bboxes.append((x0, y0, x1, y1))
+                    labels.append(label)
 
-                if boxes:
-                    samples.append((im_path, np.array(boxes), labels))
-                    labels_set.update(labels)
+                samples.append((img_path, np.array(bboxes), labels))
 
-        return samples, labels_set
-
-    def __len__(self):
-        return len(self.samples)
-
-    def __getitem__(self, index):
-        path, bboxes, labels = self.samples[index]
-
-        image = Image.open(path).convert('RGB')
-        image_arr = np.asarray(image)
-
-        xy_array, wh_array = utils.split_bboxes(bboxes)
-
-        image_out, xy_array_out = self.tfm(image_arr, xy_array)
-
-        w_ratio = image_out.shape[1]/image_arr.shape[1]
-        h_ratio = image_out.shape[0]/image_arr.shape[0]
-
-        wh_array_out = wh_array * [w_ratio, h_ratio]
-
-        bboxes_out = utils.merge_bboxes(xy_array_out, wh_array_out)
-
-        return image_out, bboxes_out, labels
+        return cls(samples, *args, **kwargs)

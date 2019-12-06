@@ -1,8 +1,13 @@
 import numpy as np
 from scipy import ndimage
 from PIL import Image
+from boxaug import utils
 
-__all__ = ['Compose', 'Affine', 'Identity', 'Flip', 'Resize']
+__all__ = ['Compose', 'Affine', 'Identity', 'Flip', 'Resize', 'Crop', 'AutoCrop']
+
+
+class TransformError(Exception):
+    pass
 
 
 class TransformBase():
@@ -158,3 +163,32 @@ class Resize(TransformBase):
         points_out = points * [self.w / w, self.h / h]
 
         return image_out, points_out
+
+
+class Crop(TransformBase):
+    def __init__(self, x0, y0, x1, y1):
+        self.x0 = int(x0)
+        self.y0 = int(y0)
+        self.x1 = int(x1)
+        self.y1 = int(y1)
+
+    def __call__(self, image, points):
+        image_out = image[self.y0:self.y1, self.x0:self.x1]
+        points_out = points - [self.x0, self.y0]
+
+        return image_out, points_out
+
+
+class AutoCrop(TransformBase):
+    """
+    Crops image to desired aspect ratio keeping all points inside the crop.
+    If such crop is impossible, exceptions.CropError is raised.
+    """
+
+    def __init__(self, aspect_ratio):
+        assert aspect_ratio > 0
+        self.ar = aspect_ratio
+
+    def __call__(self, image, points):
+        image, points = utils.safe_crop(image, points, self.ar)
+        return image, points

@@ -1,0 +1,4 @@
+
+
+class CropError(Exception):
+    pass
