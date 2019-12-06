@@ -3,6 +3,7 @@ import numpy as np
 from PIL import Image
 from lxml import etree
 from boxaug import transforms
+from boxaug import utils
 
 
 class LabelImgDataset():
@@ -67,7 +68,7 @@ class LabelImgDataset():
         image = Image.open(path).convert('RGB')
         image_arr = np.asarray(image)
 
-        xy_array, wh_array = transforms.split_bboxes(bboxes)
+        xy_array, wh_array = utils.split_bboxes(bboxes)
 
         image_out, xy_array_out = self.tfm(image_arr, xy_array)
 
@@ -76,6 +77,6 @@ class LabelImgDataset():
 
         wh_array_out = wh_array * [w_ratio, h_ratio]
 
-        bboxes_out = transforms.merge_bboxes(xy_array_out, wh_array_out)
+        bboxes_out = utils.merge_bboxes(xy_array_out, wh_array_out)
 
         return image_out, bboxes_out, labels
