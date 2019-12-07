@@ -1,6 +1,8 @@
+import os
 import numpy as np
+from lxml import etree
 from PIL import Image, ImageDraw
-from boxaug.exceptions import CropError
+from boxaug.exceptions import BoxaugError
 
 
 def IOU(a_wh, b_wh):
@@ -24,33 +26,6 @@ def IOU(a_wh, b_wh):
     U = area_a + area_b - I
 
     return I / U
-
-
-def to_yolo(image, bboxes, labels, num_classes, num_anchors, width, height):
-    """
-    Args:
-        bboxes: np.ndarray of shape (N, 4)
-        labels: list of integers
-        num_classes: total number of classes in your dataset
-
-    Returns:
-        np.ndarray of shape (height, width, len(bboxes) * 5 + num_classes)
-    """
-    assert len(bboxes.shape) == 2
-    assert bboxes.shape[1] == 4
-
-    bboxes_xy, bboxes_wh = split_bboxes(bboxes)
-
-    x_ratio, y_ratio = height / image.shape[1], width / image.shape[0]
-
-    bboxes_xy *= [x_ratio, y_ratio]
-    bboxes_wh *= [x_ratio, y_ratio]
-
-    out = np.zeros((height, width, bboxes.shape[0] * 5 + num_classes))
-
-    for xy, wh, one_hot_labels in zip(bboxes_xy, bboxes_wh, one_hot_labels):
-        out[y, x, ]
-        pass
 
 
 def split_bboxes(bboxes):
@@ -132,10 +107,10 @@ def to_pil(image, bboxes):
     return pil_image
 
 
-def safe_crop(image, points, ar, return_coordinates=False):
+def auto_crop(image, points, ar, return_coordinates=False):
     """
     Crops image to desired aspect ratio keeping all bounding boxes inside
-    the crop. If such crop is impossible, CropError is raised.
+    the crop. If such crop is impossible, BoxaugError is raised.
 
     Args:
         image: np.ndarray of shape (H, W, 3)
@@ -169,7 +144,7 @@ def safe_crop(image, points, ar, return_coordinates=False):
     tb_y1 = points[:, 1].max()
 
     if (tb_x1 - tb_x0) > crop_w or (tb_y1 - tb_y0) > crop_h:
-            raise CropError('Cannot fit all boxes inside crop.')
+            raise BoxaugError('Cannot fit all boxes inside crop.')
 
     # Total box center coordinates
     center_x, center_y = np.array([0.5, 0.5]) @ [[tb_x0, tb_y0],
@@ -252,3 +227,45 @@ def bboxes_as_2pts(bboxes, align=True):
             bboxes[i] = points.reshape(8)
     
     return bboxes[:, :4]
+
+
+def load_labelimg(path, min_boxes=1, use_labels=None):
+        """
+        Args:
+            path (str): path to directory with LabelImg .xml files
+
+        Returns:
+            list of tuples: (
+                img_path (str), 
+                boxes (np.ndarray of shape (N, 4)),
+                labels (list of str)
+            )
+        """
+        samples = []
+
+        for filename in os.listdir(path):
+            if filename.endswith('xml'):
+                xml_path = os.path.join(path, filename)
+
+                tree = etree.parse(xml_path)
+
+                img_path = tree.find('path').text
+
+                bboxes = []
+                labels = []
+
+                for obj in tree.findall('object'):
+                    x0 = int(obj.find('bndbox/xmin').text)
+                    y0 = int(obj.find('bndbox/ymin').text)
+                    x1 = int(obj.find('bndbox/xmax').text)
+                    y1 = int(obj.find('bndbox/ymax').text)
+                    label = obj.find('name').text
+
+                    if use_labels is None or label in use_labels:
+                        bboxes.append((x0, y0, x1, y1))
+                        labels.append(label)
+
+                if len(bboxes) >= min_boxes:
+                    samples.append((img_path, np.array(bboxes), labels))
+
+        return samples

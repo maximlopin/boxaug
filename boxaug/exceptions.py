@@ -1,4 +1,4 @@
 
 
-class CropError(Exception):
+class BoxaugError(Exception):
     pass

@@ -1,19 +1,24 @@
-#### What is it?
+### About
 
-Transforms for images and bounding boxes.
+Transforms similar to torchvision's, but applicable to bounding boxes as well.
 
-```boxaug.transforms```
+```
+boxaug.transforms.Affine
+boxaug.transforms.Crop
+boxaug.transforms.Compose
+boxaug.transforms.Resize
+boxaug.transforms.Flip
+```
 
-Dataset for augmenting LabelImg (github.com/tzutalin/labelImg) data.
+Also, ```boxaug.transforms.AutoCrop```: convert images to the same aspect ratio keeping all bounding boxes in focus.
 
-```boxaug.datasets```
 
-#### Install
+### Install
 
 ```
 pip install boxaug
 ```
 
-#### Usage
+### Usage
 
-See example of usage in ```example.ipynb``` (a few lines of code).
+See example of usage in ```example.ipynb```.

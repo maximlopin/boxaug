@@ -3,11 +3,7 @@ from scipy import ndimage
 from PIL import Image
 from boxaug import utils
 
-__all__ = ['Compose', 'Affine', 'Identity', 'Flip', 'Resize', 'Crop', 'AutoCrop']
-
-
-class TransformError(Exception):
-    pass
+__all__ = ['Compose', 'Affine', 'Identity', 'Flip', 'Resize', 'Crop']
 
 
 class TransformBase():
@@ -62,7 +58,10 @@ class Affine(TransformBase):
         """
         Args:
             deg (scalar or tuple): rotation angle
-            shear (tuple): (xrange, yrange) or (xmin, xmax, ymin, ymax)
+
+            shear (scalar or tuple): scalar(xrange) or tuple(xrange, yrange) 
+            or tuple(xmin, xmax, ymin, ymax)
+
             resampling: 'reflect' | 'constant' | 'nearest' | 'mirror' | 'wrap'
         """
 
@@ -182,7 +181,10 @@ class Crop(TransformBase):
 class AutoCrop(TransformBase):
     """
     Crops image to desired aspect ratio keeping all points inside the crop.
-    If such crop is impossible, exceptions.CropError is raised.
+
+    WARNING: If such crop is impossible, exceptions.BoxaugError is raised.
+    Before using this transform you might want to remove samples from your
+    dataset that cause TransformError.
     """
 
     def __init__(self, aspect_ratio):
@@ -190,5 +192,5 @@ class AutoCrop(TransformBase):
         self.ar = aspect_ratio
 
     def __call__(self, image, points):
-        image, points = utils.safe_crop(image, points, self.ar)
+        image, points = utils.auto_crop(image, points, self.ar)
         return image, points
