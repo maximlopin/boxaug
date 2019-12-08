@@ -39,7 +39,7 @@ class AutoCropDataset():
 
         samples = utils.load_labelimg(path, min_boxes, use_labels)
         self._ar = width / height
-        self._samples, self._crop_coords =  self._preprocess_samples(samples)
+        self._samples, self._crop_coords = self._preprocess_samples(samples)
         self._tfm = transforms.Compose(
             transforms.Resize(width, height),
             transform or transforms.Identity()
