@@ -1,13 +1,13 @@
 import numpy as np
 from scipy import ndimage
-from PIL import Image
+from PIL import Image, ImageEnhance
 from boxaug import utils
 
-__all__ = ['Compose', 'Affine', 'Identity', 'Flip', 'Resize', 'Crop']
+__all__ = ['Compose', 'Flip', 'Affine', 'Identity', 'Resize', 'Crop', 'Color']
 
 
 class TransformBase():
-    """Transform Interface"""
+    """Abstract Class"""
 
     def __call__(self, image, points):
         """
@@ -19,6 +19,28 @@ class TransformBase():
             tuple(transformed image, transformed points)
         """
         raise NotImplementedError
+
+    def apply_to_bboxes(self, image, bboxes):
+        """
+        Applies transform to bounding boxes of format (x0, y0, x1, y1).
+
+        Args:
+            image: np.ndarray of shape (H, W, 3)
+            bboxes: np.ndarray of shape (N, 4)
+        
+        Returns:
+            image: np.ndarray
+            bboxes: np.ndarray of shape (N, 4)
+        """
+        bboxes_4pts = utils.bboxes_as_4pts(bboxes)
+        points = bboxes_4pts.reshape(-1, 2)
+
+        image_out, points_out = self(image, points)
+
+        bboxes_4pts = points_out.reshape(-1, 8)
+        bboxes_out = utils.bboxes_as_2pts(bboxes_4pts, align=True)
+
+        return image_out, bboxes_out
 
 
 class Compose(TransformBase):
@@ -70,7 +92,7 @@ class Affine(TransformBase):
         elif isinstance(deg, tuple):
             self.deg = (deg[0], deg[1])
         else:
-            raise TypeError('degrees must be either tuple or scalar')
+            raise TypeError('degrees must be scalar or tuple')
 
         if isinstance(shear, (int, float)):
             self.shx = (-shear, shear)
@@ -85,7 +107,7 @@ class Affine(TransformBase):
             else:
                 raise TypeError('shear must be a tuple of 2 or 4 scalars')
         else:
-            raise TypeError('shx must be either tuple or scalar')
+            raise TypeError('shear must be scalar or tuple')
 
         scipy_modes = ['reflect', 'constant', 'nearest', 'mirror', 'wrap']
 
@@ -178,19 +200,38 @@ class Crop(TransformBase):
         return image_out, points_out
 
 
-class AutoCrop(TransformBase):
-    """
-    Crops image to desired aspect ratio keeping all points inside the crop.
+class Color():
+    def __init__(self, brightness=0, contrast=0, saturation=0):
+        assert 0 <= brightness <= 1.0
+        assert 0 <= contrast <= 1.0
+        assert 0 <= saturation <= 1.0
 
-    WARNING: If such crop is impossible, exceptions.BoxaugError is raised.
-    Before using this transform you might want to remove samples from your
-    dataset that cause TransformError.
-    """
+        if isinstance(brightness, (int, float)):
+            self.bri = (1 - brightness, 1 + brightness)
+        else:
+            raise TypeError('brightness must be a scalar')
 
-    def __init__(self, aspect_ratio):
-        assert aspect_ratio > 0
-        self.ar = aspect_ratio
+        if isinstance(contrast, (int, float)):
+            self.con = (1 - contrast, 1 + contrast)
+        else:
+            raise TypeError('contrast must be a scalar')
+
+        if isinstance(saturation, (int, float)):
+            self.sat = (1 - saturation, 1 + saturation)
+        else:
+            raise TypeError('saturation must be a scalar')
 
     def __call__(self, image, points):
-        image, points = utils.auto_crop(image, points, self.ar)
-        return image, points
+        bri = np.random.uniform(*self.bri)
+        con = np.random.uniform(*self.con)
+        sat = np.random.uniform(*self.sat)
+
+        img = Image.fromarray(image)
+
+        img = ImageEnhance.Brightness(img).enhance(bri)
+        img = ImageEnhance.Contrast(img).enhance(con)
+        img = ImageEnhance.Color(img).enhance(sat)
+
+        image_out = np.asarray(img)
+
+        return image_out, points

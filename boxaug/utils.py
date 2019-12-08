@@ -109,8 +109,9 @@ def to_pil(image, bboxes):
 
 def auto_crop(image, points, ar, return_coordinates=False):
     """
-    Crops image to desired aspect ratio keeping all bounding boxes inside
-    the crop. If such crop is impossible, BoxaugError is raised.
+    Crops image to desired aspect ratio keeping all points inside the crop.
+
+    WARNING: If such crop is impossible, exceptions.BoxaugError is raised.
 
     Args:
         image: np.ndarray of shape (H, W, 3)
@@ -269,3 +270,16 @@ def load_labelimg(path, min_boxes=1, use_labels=None):
                     samples.append((img_path, np.array(bboxes), labels))
 
         return samples
+
+
+def assign_anchors(bboxes_wh, anchor_bboxes_wh):
+    """
+    Args:
+        bboxes: np.ndarray of shape (N, 2)
+        anchor_bboxes: np.ndarray of shape (M, 2)
+
+    Returns:
+        list of N integers (indices of anchor boxes)
+    """
+    return [np.argmax([IOU(a_wh, b_wh) for b_wh in anchor_bboxes_wh])
+                                       for a_wh in bboxes_wh]
