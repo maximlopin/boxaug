@@ -11,8 +11,8 @@ class LabelImgDataset():
 
         # TODO: accept (bool) rotate_bbox and (bool) reshape_bbox as paremeters
         # and use them to transform bboxes accordingly
-        self._rotate_bbox = rotate_bbox
-        self._reshape_bbox = reshape_bbox
+        # self._rotate_bbox = rotate_bbox
+        # self._reshape_bbox = reshape_bbox
 
         self._samples = utils.load_labelimg(path, min_boxes, use_labels)
         self._tfm = transforms.Identity() if transform is None else transform
