@@ -7,10 +7,13 @@ from boxaug.exceptions import BoxaugError
 
 
 class LabelImgDataset():
-    def __init__(self, path, transform, min_boxes=1,
-                 use_labels=None, affine_bboxes=True):
+    def __init__(self, path, transform, min_boxes=1, use_labels=None):
 
-        self._affine_bboxes = affine_bboxes
+        # TODO: accept (bool) rotate_bbox and (bool) reshape_bbox as paremeters
+        # and use them to transform bboxes accordingly
+        self._rotate_bbox = rotate_bbox
+        self._reshape_bbox = reshape_bbox
+
         self._samples = utils.load_labelimg(path, min_boxes, use_labels)
         self._tfm = transforms.Identity() if transform is None else transform
 
