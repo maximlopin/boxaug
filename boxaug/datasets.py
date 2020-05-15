@@ -7,9 +7,12 @@ from boxaug.exceptions import BoxaugError
 
 
 class LabelImgDataset():
-    def __init__(self, path, transform, min_boxes=1, use_labels=None):
+    def __init__(self, path, transform, min_boxes=1,
+                 use_labels=None, affine_bboxes=True):
+
+        self._affine_bboxes = affine_bboxes
         self._samples = utils.load_labelimg(path, min_boxes, use_labels)
-        self._tfm = transform or transforms.Identity()
+        self._tfm = transforms.Identity() if transform is None else transform
 
     def __getitem__(self, index):
         path, bboxes, labels = self._samples[index]
